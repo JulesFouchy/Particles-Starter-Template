@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <iostream>
 #include "glm/ext/quaternion_common.hpp"
 #include "glm/ext/scalar_constants.hpp"
@@ -90,15 +91,97 @@ std::optional<glm::vec2> intersection(Segment const& s1, Segment const& s2)
     return std::nullopt;
 }
 
+struct Grid {
+    Grid(size_t width, size_t height)
+    {
+        indices.resize(width);
+        for (auto& column : indices)
+            column.resize(height);
+    }
+
+    auto operator()(size_t x, size_t y) -> std::optional<size_t>&
+    {
+        return indices[x][y];
+    }
+
+    auto width() const -> size_t
+    {
+        return indices.size();
+    }
+
+    auto height() const -> size_t
+    {
+        return indices[0].size();
+    }
+
+    std::vector<std::vector<std::optional<size_t>>> indices;
+};
+
+auto poisson_disk_sampling(glm::vec2 region_min, glm::vec2 region_max, float spacing, int max_attemps) -> std::vector<glm::vec2>
+{
+    auto        all_points    = std::vector<glm::vec2>{};
+    auto        active_points = std::vector<glm::vec2>{(region_min + region_max) * 0.5f};
+    float const cell_size     = spacing / std::sqrt(2.f);
+    auto const  region_size   = region_max - region_min;
+    auto const  bob           = region_size / cell_size;
+    auto        grid          = Grid(std::ceil(bob.x), std::ceil(bob.y));
+
+    while (!active_points.empty())
+    {
+        auto const  start_point_index = utils::rand(0.f, active_points.size() - 1);
+        auto const& start_point       = active_points[start_point_index];
+
+        bool is_valid{false};
+        for (int attempt = 0; attempt < max_attemps; ++attempt)
+        {
+            auto const angle     = utils::rand(0.f, 2.f * glm::pi<float>());
+            auto const radius    = utils::rand(spacing, 2.f * spacing);
+            auto const new_point = start_point + radius * glm::vec2{cos(angle), sin(angle)};
+            bool       blah{true};
+            if (new_point.x < region_min.x || new_point.x > region_max.x
+                || new_point.y < region_min.y || new_point.y > region_max.y)
+            {
+                blah = false;
+            }
+
+            auto const new_point_indices = glm::floor((new_point - region_min) / cell_size);
+
+            for (int x = new_point_indices.x - 2; x <= new_point_indices.x + 2; ++x)
+            {
+                for (int y = new_point_indices.y - 2; y <= new_point_indices.y + 2; ++y)
+                {
+                    if (x < 0 || x >= grid.width() || y < 0 || y >= grid.height())
+                        continue;
+                    auto const idx = grid(x, y);
+                    if (!idx.has_value())
+                        continue;
+                    auto const point = all_points[*idx];
+                    if (glm::distance(point, new_point) < spacing)
+                    {
+                        blah = false;
+                    }
+                }
+            }
+            if (blah)
+            {
+                active_points.push_back(new_point);
+                all_points.push_back(new_point);
+                grid(new_point_indices.x, new_point_indices.y) = all_points.size() - 1;
+                is_valid                                       = true;
+                break;
+            }
+        }
+        if (!is_valid)
+            active_points.erase(active_points.begin() + start_point_index);
+    }
+
+    return all_points;
+}
+
 struct Particle {
-    glm::vec2 position{
-        utils::rand(-gl::window_aspect_ratio(), +gl::window_aspect_ratio()),
-        utils::rand(-1.f, +1.f),
-    };
+    glm::vec2 position{};
 
-    glm::vec2 velocity;
-
-    float mass{utils::rand(1.f, 2.f)};
+    glm::vec2 velocity{0.f};
 
     float age{0.f};
     float lifespan{utils::rand(30.f, 50.f)};
@@ -116,12 +199,12 @@ struct Particle {
 
     glm::vec3 color() const
     {
-        return glm::mix(start_color, end_color, easeInOut(relative_age(), 4.f));
+        return glm::vec3{1.f}; // glm::mix(start_color, end_color, easeInOut(relative_age(), 4.f));
     }
 
     float radius() const
     {
-        return std::min(lifespan - age, 2.f) / 2.f * 0.03f;
+        return 0.1f / 2.f; // std::min(lifespan - age, 2.f) / 2.f * 0.03f;
     }
 
     float relative_age() const
@@ -131,12 +214,33 @@ struct Particle {
 
     Particle()
     {
-        float const initial_angle = utils::rand(0.f, 2.f * glm::pi<float>());
+        // Rectangle
+        // position.x = utils::rand(0.3, 0.8);
+        // position.y = utils::rand(-0.2, 0.5);
 
-        velocity = {
-            0.2f * std::cos(initial_angle),
-            0.2f * std::sin(initial_angle),
-        };
+        // Parallélogramme
+        // auto const x_axis = glm::vec2{0.5f, 0.f};
+        // auto const y_axis = glm::vec2{0.7f, 0.7f};
+        // auto const offset = glm::vec2{0.5f, -0.2f};
+        // position    = utils::rand(0.f, 1.f) * x_axis
+        //            + utils::rand(0.f, 1.f) * y_axis
+        //            + offset;
+
+        // Disque
+        // auto const angle  = utils::rand(0.f, 2.f * glm::pi<float>());
+        // auto const area   = utils::rand(0.f, glm::pi<float>() * 0.8f * 0.8f);
+        // auto const radius = std::sqrt(area / glm::pi<float>());
+        // position          = radius * glm::vec2{cos(angle), sin(angle)};
+
+        // Disque rejection sampling
+        while (true)
+        {
+            float const R = 0.8f;
+            position.x    = utils::rand(-R, R);
+            position.y    = utils::rand(-R, R);
+            if (glm::length(position) < R)
+                break;
+        }
     }
 };
 
@@ -147,60 +251,16 @@ int main()
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
-    std::vector<Particle> particles(100);
+    auto const points = poisson_disk_sampling({-1.f, -1.f}, {1.f, 1.f}, 0.1f, 20);
 
-    std::vector<Wall> walls;
-    walls.push_back(Wall{{-0.3f, -0.4f}, {0.1f, 0.8f}});
-    walls.push_back(Wall{{0.f, 0.f}, {0.3f, 0.3f}});
-
-    std::vector<Circle> circles;
-    circles.push_back(Circle{.center = {0.3f, 0.f}, .radius = 0.2f});
-    circles.push_back(Circle{.center = {0.7f, -0.5f}, .radius = 0.4f});
-    circles.push_back(Circle{.center = {-0.4f, 0.f}, .radius = 0.1f});
-
-    for (auto const& circle : circles)
-    {
-        std::erase_if(particles, [&](Particle const& particle) { return glm::distance(particle.position, circle.center) < circle.radius; });
-    }
-
-    std::optional<glm::vec2> place_wall{};
-
-    gl::set_events_callbacks({gl::EventsCallbacks{
-        .on_mouse_pressed = [&](gl::MousePressedEvent const& e) {
-            auto const w = gl::window_width_in_screen_coordinates();
-            auto const h = gl::window_height_in_screen_coordinates();
-
-            auto pos = (e.position - glm::vec2{w, h} * 0.5f) / (float)gl::window_height_in_screen_coordinates() * 2.f;
-            pos.y *= -1.f;
-            if (place_wall.has_value())
-            {
-                walls.push_back(Wall{*place_wall, pos});
-                place_wall.reset();
-                std::cout << walls.size() << '\n';
-            }
-            else
-            {
-                place_wall = pos;
-            }
-        },
-    }});
+    std::vector<Particle> particles(points.size());
+    for (size_t i = 0; i < points.size(); ++i)
+        particles[i].position = points[i];
 
     while (gl::window_is_open())
     {
         glClearColor(0.f, 0.f, 0.f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);
-
-        // for (auto const& circle : circles)
-        // {
-        //     // auto const segment1 = Segment{{-1.f, 0.f}, {1.f, 0.f}};
-        //     auto const segment2 = Segment{{0.f, -1.f}, gl::mouse_position()};
-        //     // utils::draw_line(segment1.start, segment1.end, 0.01f, glm::vec4{1.f});
-        //     utils::draw_line(segment2.start, segment2.end, 0.01f, glm::vec4{1.f});
-
-        //     auto const inter = intersection(segment2, circle);
-        //     if (inter)
-        //         utils::draw_disk(*inter, 0.05f, glm::vec4{0., 1.f, 0.f, 1.f});
-        // }
 
         for (auto& particle : particles)
         {
@@ -217,56 +277,13 @@ int main()
             // Follow mouse
             // forces += (gl::mouse_position() - particle.position);
 
-            particle.velocity += forces / particle.mass * gl::delta_time_in_seconds();
-
-            auto const old_pos = particle.position;
+            particle.velocity += forces * gl::delta_time_in_seconds();
             particle.position += particle.velocity * gl::delta_time_in_seconds();
-            auto const new_pos = particle.position;
-
-            auto tmpwalls = walls;
-            tmpwalls.push_back(Wall{{-gl::window_aspect_ratio(), -1.f}, {+gl::window_aspect_ratio(), -1.f}});
-            tmpwalls.push_back(Wall{{+gl::window_aspect_ratio(), -1.f}, {+gl::window_aspect_ratio(), +1.f}});
-            tmpwalls.push_back(Wall{{+gl::window_aspect_ratio(), +1.f}, {-gl::window_aspect_ratio(), +1.f}});
-            tmpwalls.push_back(Wall{{-gl::window_aspect_ratio(), +1.f}, {-gl::window_aspect_ratio(), -1.f}});
-
-            for (auto const& wall : tmpwalls)
-            {
-                auto const inter = intersection({old_pos, new_pos}, {wall.end, wall.start});
-                if (!inter)
-                    continue;
-                auto const wall_dir    = glm::normalize(wall.end - wall.start);
-                auto const wall_normal = glm::vec2{-wall_dir.y, wall_dir.x};
-                particle.velocity      = glm::reflect(particle.velocity, wall_normal);
-
-                auto desired_dist   = glm::distance(old_pos, new_pos);
-                auto dist_to_wall   = glm::distance(old_pos, *inter);
-                auto remaining_dist = desired_dist - dist_to_wall;
-                particle.position   = *inter + glm::normalize(particle.velocity) * remaining_dist;
-            }
-            for (auto const& circle : circles)
-            {
-                auto const inter = intersection(Segment{old_pos, new_pos}, circle);
-                if (!inter)
-                    continue;
-                auto const normal = glm::normalize(*inter - circle.center);
-                particle.velocity = glm::reflect(particle.velocity, normal);
-
-                auto desired_dist   = glm::distance(old_pos, new_pos);
-                auto dist_to_wall   = glm::distance(old_pos, *inter);
-                auto remaining_dist = desired_dist - dist_to_wall;
-                particle.position   = *inter + glm::normalize(particle.velocity) * remaining_dist;
-            }
         }
 
-        std::erase_if(particles, [&](Particle const& particle) { return particle.age > particle.lifespan; });
+        // std::erase_if(particles, [&](Particle const& particle) { return particle.age > particle.lifespan; });
 
         for (auto const& particle : particles)
             utils::draw_disk(particle.position, particle.radius(), glm::vec4{particle.color(), 1.f});
-
-        for (auto const& wall : walls)
-            utils::draw_line(wall.start, wall.end, 0.01f, glm::vec4{1.f});
-
-        for (auto const& circle : circles)
-            utils::draw_disk(circle.center, circle.radius, glm::vec4{1.f, 1., 1., 0.3f});
     }
 }
