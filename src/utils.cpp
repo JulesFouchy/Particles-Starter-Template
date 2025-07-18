@@ -15,6 +15,11 @@ float rand(float min, float max)
     return std::uniform_real_distribution<float>{min, max}(generator());
 }
 
+int rand(int min, int max)
+{
+    return std::uniform_int_distribution<int>{min, max}(generator());
+}
+
 static auto make_square_mesh() -> gl::Mesh
 {
     return gl::Mesh{gl::Mesh_Descriptor{
