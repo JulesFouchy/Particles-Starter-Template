@@ -37,7 +37,7 @@ target_link_libraries(opengl_framework PUBLIC img::img)
 
 # ---Add exe_path---
 add_subdirectory(lib/exe_path)
-target_link_libraries(opengl_framework PRIVATE exe_path::exe_path)
+target_link_libraries(opengl_framework PUBLIC exe_path::exe_path)
 
 # ---Add tinyobjloader---
 target_include_directories(opengl_framework PUBLIC lib/tinyobjloader)
