@@ -1,182 +1,19 @@
 #include <cstddef>
 #include <iostream>
+#include "exe_path/exe_path.h"
 #include "glm/ext/quaternion_common.hpp"
 #include "glm/ext/scalar_constants.hpp"
+#include "glm/ext/vector_float2.hpp"
 #include "glm/geometric.hpp"
 #include "opengl-framework/opengl-framework.hpp"
 #include "utils.hpp"
 
-float easeInOut(float x, float power)
-{
-    if (x < 0.5)
-    {
-        return 0.5 * pow(2 * x, power);
-    }
-    else
-    {
-        return 1 - 0.5 * pow(2 * (1 - x), power);
-    }
-}
-
-struct Wall {
-    glm::vec2 start{};
-    glm::vec2 end{};
-};
-
-struct Segment {
-    glm::vec2 start{};
-    glm::vec2 end{};
-};
-
-bool nearly_equal(float a, float b, float epsilon = 1e-6f)
-{
-    return std::fabs(a - b) < epsilon;
-}
-
-bool is_invertible(const glm::mat2& mat, float epsilon = 1e-6f)
-{
-    return !nearly_equal(glm::determinant(mat), 0.0f, epsilon);
-}
-
-struct Circle {
-    glm::vec2 center;
-    float     radius;
-};
-
-std::optional<glm::vec2> intersection(Segment const& segment, Circle const& circle)
-{
-    glm::vec2 const o      = segment.start;
-    glm::vec2 const d      = segment.end - segment.start;
-    glm::vec2 const center = circle.center;
-    float const     r      = circle.radius;
-
-    float const a = glm::dot(d, d);
-    float const b = 2 * glm::dot(o - center, d);
-    float const c = glm::dot(o - center, o - center) - r * r;
-
-    float const delta = b * b - 4 * a * c;
-    if (delta <= 0)
-        return std::nullopt;
-
-    float const t1 = (-b - std::sqrt(delta)) / 2.f / a;
-    float const t2 = (-b + std::sqrt(delta)) / 2.f / a;
-
-    if (0 <= t1 && t1 <= 1 && 0 <= t2 && t2 <= 1)
-        return o + std::min(t1, t2) * d;
-
-    if (0 <= t1 && t1 <= 1)
-        return o + t1 * d;
-
-    if (0 <= t2 && t2 <= 1)
-        return o + t2 * d;
-
-    return std::nullopt;
-}
-
-std::optional<glm::vec2> intersection(Segment const& s1, Segment const& s2)
-{
-    glm::vec2 const o1 = s1.start;
-    glm::vec2 const o2 = s2.start;
-    glm::vec2 const d1 = s1.end - s1.start;
-    glm::vec2 const d2 = s2.end - s2.start;
-
-    glm::mat2x2 const mat = glm::mat2x2{d1, -d2};
-    // if (!is_invertible(mat))
-    //     return std::nullopt;
-
-    glm::vec2 const solutions = glm::inverse(mat) * (o2 - o1);
-    if (0 <= solutions.x && solutions.x <= 1 && 0 <= solutions.y && solutions.y <= 1)
-        return o1 + solutions.x * d1;
-
-    return std::nullopt;
-}
-
-struct Grid {
-    Grid(size_t width, size_t height)
-    {
-        indices.resize(width);
-        for (auto& column : indices)
-            column.resize(height);
-    }
-
-    auto operator()(size_t x, size_t y) -> std::optional<size_t>&
-    {
-        return indices[x][y];
-    }
-
-    auto width() const -> size_t
-    {
-        return indices.size();
-    }
-
-    auto height() const -> size_t
-    {
-        return indices[0].size();
-    }
-
-    std::vector<std::vector<std::optional<size_t>>> indices;
-};
-
-auto poisson_disk_sampling(glm::vec2 region_min, glm::vec2 region_max, float spacing, int max_attemps) -> std::vector<glm::vec2>
-{
-    auto        all_points    = std::vector<glm::vec2>{};
-    auto        active_points = std::vector<glm::vec2>{(region_min + region_max) * 0.5f};
-    float const cell_size     = spacing / std::sqrt(2.f);
-    auto const  region_size   = region_max - region_min;
-    auto const  bob           = region_size / cell_size;
-    auto        grid          = Grid(std::ceil(bob.x), std::ceil(bob.y));
-
-    while (!active_points.empty())
-    {
-        auto const  start_point_index = utils::rand(0.f, active_points.size() - 1);
-        auto const& start_point       = active_points[start_point_index];
-
-        bool is_valid{false};
-        for (int attempt = 0; attempt < max_attemps; ++attempt)
-        {
-            auto const angle     = utils::rand(0.f, 2.f * glm::pi<float>());
-            auto const radius    = utils::rand(spacing, 2.f * spacing);
-            auto const new_point = start_point + radius * glm::vec2{cos(angle), sin(angle)};
-            bool       blah{true};
-            if (new_point.x < region_min.x || new_point.x > region_max.x
-                || new_point.y < region_min.y || new_point.y > region_max.y)
-            {
-                blah = false;
-            }
-
-            auto const new_point_indices = glm::floor((new_point - region_min) / cell_size);
-
-            for (int x = new_point_indices.x - 2; x <= new_point_indices.x + 2; ++x)
-            {
-                for (int y = new_point_indices.y - 2; y <= new_point_indices.y + 2; ++y)
-                {
-                    if (x < 0 || x >= grid.width() || y < 0 || y >= grid.height())
-                        continue;
-                    auto const idx = grid(x, y);
-                    if (!idx.has_value())
-                        continue;
-                    auto const point = all_points[*idx];
-                    if (glm::distance(point, new_point) < spacing)
-                    {
-                        blah = false;
-                    }
-                }
-            }
-            if (blah)
-            {
-                active_points.push_back(new_point);
-                all_points.push_back(new_point);
-                grid(new_point_indices.x, new_point_indices.y) = all_points.size() - 1;
-                is_valid                                       = true;
-                break;
-            }
-        }
-        if (!is_valid)
-            active_points.erase(active_points.begin() + start_point_index);
-    }
-
-    return all_points;
-}
+//
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+#define NANOSVG_IMPLEMENTATION
+#include "nanosvg.h"
 
 struct Particle {
     glm::vec2 position{};
@@ -199,91 +36,242 @@ struct Particle {
 
     glm::vec3 color() const
     {
-        return glm::vec3{1.f}; // glm::mix(start_color, end_color, easeInOut(relative_age(), 4.f));
+        return glm::vec3{0.7f, 0.3f, 0.3f}; // glm::mix(start_color, end_color, easeInOut(relative_age(), 4.f));
     }
 
     float radius() const
     {
-        return 0.1f / 2.f; // std::min(lifespan - age, 2.f) / 2.f * 0.03f;
+        return 0.02f / 2.f; // std::min(lifespan - age, 2.f) / 2.f * 0.03f;
     }
 
     float relative_age() const
     {
         return age / lifespan;
     }
+};
 
-    Particle()
+glm::vec2 bezier1(glm::vec2 p1, glm::vec2 p2, float t)
+{
+    return glm::mix(p1, p2, t);
+}
+
+glm::vec2 bezier2(glm::vec2 p1, glm::vec2 a, glm::vec2 p2, float t)
+{
+    return bezier1(bezier1(p1, a, t), bezier1(a, p2, t), t);
+}
+
+glm::vec2 bezier3(glm::vec2 p1, glm::vec2 a1, glm::vec2 a2, glm::vec2 p2, float t)
+{
+    return bezier1(bezier2(p1, a1, a2, t), bezier2(a1, a2, p2, t), t);
+}
+
+void draw_parametric(std::function<glm::vec2(float)> const& parametric)
+{
+    glm::vec2    prevPoint = parametric(0.);
+    size_t const nb_points{100};
+    for (size_t i = 1; i <= nb_points; ++i)
     {
-        // Rectangle
-        // position.x = utils::rand(0.3, 0.8);
-        // position.y = utils::rand(-0.2, 0.5);
-
-        // Parallélogramme
-        // auto const x_axis = glm::vec2{0.5f, 0.f};
-        // auto const y_axis = glm::vec2{0.7f, 0.7f};
-        // auto const offset = glm::vec2{0.5f, -0.2f};
-        // position    = utils::rand(0.f, 1.f) * x_axis
-        //            + utils::rand(0.f, 1.f) * y_axis
-        //            + offset;
-
-        // Disque
-        // auto const angle  = utils::rand(0.f, 2.f * glm::pi<float>());
-        // auto const area   = utils::rand(0.f, glm::pi<float>() * 0.8f * 0.8f);
-        // auto const radius = std::sqrt(area / glm::pi<float>());
-        // position          = radius * glm::vec2{cos(angle), sin(angle)};
-
-        // Disque rejection sampling
-        while (true)
-        {
-            float const R = 0.8f;
-            position.x    = utils::rand(-R, R);
-            position.y    = utils::rand(-R, R);
-            if (glm::length(position) < R)
-                break;
-        }
+        glm::vec2 const point = parametric((float)i / (float)nb_points);
+        utils::draw_line(prevPoint, point, 0.03, glm::vec4{1.f, 1.f, 1.f, 1.f});
+        prevPoint = point;
     }
+}
+
+// glm::vec2 closest(std::function<glm::vec2(float)> const& parametric, glm::vec2 const& point)
+// {
+//     auto const distance = [&](float t) {
+//         return glm::distance(parametric(t), point);
+//     };
+//     float best_t{0.5f};
+//     for (int _ = 0; _ < 100; ++_)
+//     {
+//         float t = 0.5f; // utils::rand(0.f, 1.f);
+
+//         for (int i = 0; i < 500; ++i)
+//         {
+//             float const deriv = (distance(t + 0.001) - distance(t)) / 0.001;
+//             t -= deriv * 0.001f;
+//             t = std::clamp(t, 0.f, 1.f);
+//         }
+//         if (distance(t) < distance(best_t))
+//             best_t = t;
+//     }
+//     return parametric(best_t);
+// }
+glm::vec2 closest(std::function<glm::vec2(float)> const& parametric, glm::vec2 const& point, float* out_t = nullptr)
+{
+    auto const distance = [&](float t) {
+        return glm::distance(parametric(t), point);
+    };
+    float t{0.};
+    for (size_t i = 1; i < 10; ++i)
+    {
+        float const tt = (float)i / 9.f;
+        if (distance(tt) < distance(t))
+            t = tt;
+    }
+
+    for (int i = 0; i < 500; ++i)
+    {
+        float const deriv = (distance(t + 0.001) - distance(t)) / 0.001;
+        t -= deriv * 0.001f;
+        t = std::clamp(t, 0.f, 1.f);
+    }
+    if (out_t)
+        *out_t = t;
+    return parametric(t);
+}
+
+struct Bezier {
+    glm::vec2 p1;
+    glm::vec2 p2;
+    glm::vec2 p3;
+    glm::vec2 p4;
 };
 
 int main()
 {
     gl::init("Particules!");
     gl::maximize_window();
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    // glEnable(GL_BLEND);
+    // glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
-    auto const points = poisson_disk_sampling({-1.f, -1.f}, {1.f, 1.f}, 0.1f, 20);
+    std::vector<Bezier> svg;
+    {
+        struct NSVGimage* image = nsvgParseFromFile((exe_path::dir() / "res/pika.svg").string().c_str(), "px", 96);
+        for (auto shape = image->shapes; shape != NULL; shape = shape->next)
+        {
+            for (auto path = shape->paths; path != NULL; path = path->next)
+            {
+                for (auto i = 0; i < path->npts - 1; i += 3)
+                {
+                    float* p = &path->pts[i * 2];
+                    svg.push_back(Bezier{{p[0], p[1]}, {p[2], p[3]}, {p[4], p[5]}, {p[6], p[7]}});
+                }
+            }
+        }
+        nsvgDelete(image);
+    }
 
-    std::vector<Particle> particles(points.size());
-    for (size_t i = 0; i < points.size(); ++i)
-        particles[i].position = points[i];
+    auto const parametric = [&](float t) {
+        // Bezier
+        // return bezier3({-.3f, -.3f}, {-0.2f, 0.5f}, {0.6f, -0.5f}, {.8f, .5f}, t);
+
+        // Heart
+        t       = 2.f * t * glm::pi<float>();
+        float s = sin(t);
+        return glm::vec2{
+                   16 * s * s * s,
+                   13 * cos(t) - 5 * cos(2 * t) - 2 * cos(3 * t) - cos(4 * t)
+               }
+               / 20.f;
+
+        // SVG
+        // size_t const i = std::clamp<size_t>(t * svg.size(), 0, svg.size() - 1);
+        // auto const&  b = svg[i];
+        // return bezier3(b.p1, b.p2, b.p3, b.p4, glm::fract(t * svg.size())) * 0.002f - glm::vec2{0.5f};
+    };
+
+    std::vector<Particle> particles(100);
+    // for (auto& particle : particles)
+    //     particle.position = parametric(utils::rand(0.f, 1.f));
+    for (size_t i = 0; i < particles.size(); ++i)
+    {
+        float const t         = (float)i / (float)(particles.size() - 1);
+        particles[i].position = parametric(t);
+        auto const tangent    = parametric(t + 0.001) - parametric(t - 0.001);
+        auto const normal     = glm::normalize(glm::vec2{-tangent.y, tangent.x});
+        particles[i].velocity = normal * 0.2f;
+    }
+
+    for (auto& particle : particles)
+    {
+        particle.position.x = utils::rand(-1.f, 1.f);
+        particle.position.y = 1.f;
+        particle.velocity   = glm::vec2{0.f};
+    }
+
+    bool start = false;
+
+    gl::set_events_callbacks({gl::EventsCallbacks{
+        .on_scroll = [&](auto&&) {
+            start = true;
+        },
+    }});
 
     while (gl::window_is_open())
     {
         glClearColor(0.f, 0.f, 0.f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        for (auto& particle : particles)
+        // utils::draw_disk({-.3f, -.3f}, 0.02, {0.5f, 0.f, 0.5f, 1.f});
+        // utils::draw_disk({-0.2f, 0.5f}, 0.02, {0.5f, 0.f, 0.5f, 1.f});
+        // utils::draw_disk({.8f, .5f}, 0.02, {0.5f, 0.f, 0.5f, 1.f});
+        // utils::draw_disk({0.6f, -0.5f}, 0.02, {0.5f, 0.f, 0.5f, 1.f});
+        // utils::draw_disk(gl::mouse_position(), 0.02, {0.5f, 0.f, 0.5f, 1.f});
+        // draw_parametric([](float t) {
+        //     t       = 2.f * t * glm::pi<float>();
+        //     float s = sin(t);
+        //     return glm::vec2{
+        //                16 * s * s * s,
+        //                13 * cos(t) - 5 * cos(2 * t) - 2 * cos(3 * t) - cos(4 * t)
+        //            }
+        //            / 20.f;
+        // });
+        // draw_parametric([](float t) {
+        //     return bezier1({-.3f, -.3f}, gl::mouse_position(), t);
+        // });
+        // draw_parametric([](float t) {
+        //     return bezier2({-.3f, -.3f}, gl::mouse_position(), {.8f, .5f}, t);
+        // });
+        draw_parametric(parametric);
+
+        // utils::draw_disk(closest(parametric, gl::mouse_position()), 0.02, {0.5f, 0.f, 0.5f, 1.f});
+        // utils::draw_disk(gl::mouse_position(), 0.02, {0.5f, 1.f, .5f, 1.f});
+
+        if (start)
         {
-            particle.age += gl::delta_time_in_seconds();
+            for (auto& particle : particles)
+            {
+                particle.age += gl::delta_time_in_seconds();
 
-            auto forces = glm::vec2{0.f};
+                auto forces = glm::vec2{0.f};
 
-            // Gravity
-            // forces += glm::vec2{0.f, -1.f} * particle.mass;
+                // Gravity
+                forces += glm::vec2{0.f, -.3f};
 
-            // Air friction
-            // forces += -particle.velocity * 1.f;
+                // Bezier
+                float      t;
+                auto const point   = closest(parametric, particle.position, &t);
+                auto const tangent = glm::normalize(parametric(t + 0.001) - parametric(t - 0.001));
+                auto const normal  = glm::vec2{-tangent.y, tangent.x};
+                auto const dist    = std::max(glm::distance(point, particle.position) * 10.f, 0.5f);
+                forces += normal / dist / dist;
 
-            // Follow mouse
-            // forces += (gl::mouse_position() - particle.position);
+                // Air friction
+                // forces += -particle.velocity * 1.f;
 
-            particle.velocity += forces * gl::delta_time_in_seconds();
-            particle.position += particle.velocity * gl::delta_time_in_seconds();
+                // Follow mouse
+                // forces += (gl::mouse_position() - particle.position);
+
+                particle.velocity += forces * gl::delta_time_in_seconds();
+                particle.position += particle.velocity * gl::delta_time_in_seconds();
+            }
         }
 
         // std::erase_if(particles, [&](Particle const& particle) { return particle.age > particle.lifespan; });
 
         for (auto const& particle : particles)
             utils::draw_disk(particle.position, particle.radius(), glm::vec4{particle.color(), 1.f});
+
+        for (auto& particle : particles)
+        {
+            if (particle.position.y < -1.3f)
+            {
+                particle.position.x = utils::rand(-1.f, 1.f);
+                particle.position.y = 1.f;
+                particle.velocity   = glm::vec2{0.f};
+            }
+        }
     }
 }
