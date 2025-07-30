@@ -12,8 +12,6 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#define NANOSVG_IMPLEMENTATION
-#include "nanosvg.h"
 
 struct Particle {
     glm::vec2 position{};
@@ -122,36 +120,12 @@ glm::vec2 closest(std::function<glm::vec2(float)> const& parametric, glm::vec2 c
     return parametric(t);
 }
 
-struct Bezier {
-    glm::vec2 p1;
-    glm::vec2 p2;
-    glm::vec2 p3;
-    glm::vec2 p4;
-};
-
 int main()
 {
     gl::init("Particules!");
     gl::maximize_window();
     // glEnable(GL_BLEND);
     // glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-
-    std::vector<Bezier> svg;
-    {
-        struct NSVGimage* image = nsvgParseFromFile((exe_path::dir() / "res/pika.svg").string().c_str(), "px", 96);
-        for (auto shape = image->shapes; shape != NULL; shape = shape->next)
-        {
-            for (auto path = shape->paths; path != NULL; path = path->next)
-            {
-                for (auto i = 0; i < path->npts - 1; i += 3)
-                {
-                    float* p = &path->pts[i * 2];
-                    svg.push_back(Bezier{{p[0], p[1]}, {p[2], p[3]}, {p[4], p[5]}, {p[6], p[7]}});
-                }
-            }
-        }
-        nsvgDelete(image);
-    }
 
     auto const parametric = [&](float t) {
         // Bezier
@@ -165,11 +139,6 @@ int main()
                    13 * cos(t) - 5 * cos(2 * t) - 2 * cos(3 * t) - cos(4 * t)
                }
                / 20.f;
-
-        // SVG
-        // size_t const i = std::clamp<size_t>(t * svg.size(), 0, svg.size() - 1);
-        // auto const&  b = svg[i];
-        // return bezier3(b.p1, b.p2, b.p3, b.p4, glm::fract(t * svg.size())) * 0.002f - glm::vec2{0.5f};
     };
 
     std::vector<Particle> particles(100);
@@ -191,7 +160,7 @@ int main()
         particle.velocity   = glm::vec2{0.f};
     }
 
-    bool start = false;
+    bool start = true; // false;
 
     gl::set_events_callbacks({gl::EventsCallbacks{
         .on_scroll = [&](auto&&) {
